@@ -4,11 +4,12 @@
 
 // We will attempt to load the bundled "anime_episodes_optimized.json" as a starter
 import freshEpisodesData from '../../assets/data/anime_episodes_optimized.json';
+import { getFullLibrary } from './FullLibraryLoader';
 
 class AnimeIndex {
   constructor() {
     this.freshEpisodes = freshEpisodesData || [];
-    this.allAnime = []; // We don't have the full index currently
+    this.allAnime = getFullLibrary(); // Load full library
   }
 
   // Normalize text for search (simplified version of Python's)
@@ -21,36 +22,25 @@ class AnimeIndex {
   search(query) {
     if (!query) return [];
 
-    // If we had a local full index, we would search it here.
-    // Since we don't, we return empty so the UI knows to trigger a "Live Search".
-    // Or we can search the "fresh episodes" list for partial matches?
-
+    // Search in full library
     const normalizedQuery = this.normalizeText(query);
-    const results = this.freshEpisodes.filter(ep => {
-      const title = this.normalizeText(ep.anime_name);
+    const results = this.allAnime.filter(anime => {
+      const title = this.normalizeText(anime.title);
       return title.includes(normalizedQuery);
-    }).map(ep => ({
-      id: null, // We might not have ID in this optimized file?
-               // Wait, the file has URLs: "https://animepahe.si/play/..."
-               // The URL contains the ID.
-      title: ep.anime_name,
-      // extract ID from URL: /play/ANIME_ID/SESSION_ID
-      id: this.extractAnimeIdFromUrl(ep.episode_url),
-      session_id: this.extractSessionIdFromUrl(ep.episode_url),
-      latest_episode: ep.episode_number
-    }));
+    }).map(anime => {
+      // Get latest episode for session id
+      const episodes = anime.episodes || [];
+      const latestEp = episodes.length > 0 ? episodes[episodes.length - 1] : null;
 
-    // Deduplicate by ID
-    const unique = [];
-    const ids = new Set();
-    for (const r of results) {
-      if (r.id && !ids.has(r.id)) {
-        ids.add(r.id);
-        unique.push(r);
-      }
-    }
+      return {
+        id: anime.id,
+        title: anime.title,
+        session_id: latestEp ? latestEp.episode_id : null,
+        latest_episode: anime.episodes_count
+      };
+    });
 
-    return unique;
+    return results;
   }
 
   extractAnimeIdFromUrl(url) {
