@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "D-TECH ANIME",
+    "slug": "d-tech-anime",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.dtech.anime"
+    }
+  }
+}
