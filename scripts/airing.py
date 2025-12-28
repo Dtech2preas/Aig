@@ -1,14 +1,13 @@
-
 #!/usr/bin/env python3
 """
-Script to scrape currently airing episodes from AnimePahe and save to cache
-Run this separately to update the currently airing episodes data
+Script to scrape currently airing episodes from AnimePahe and save to daily_update.json
 """
 
 import asyncio
 import re
 import json
 import logging
+import os
 from datetime import datetime
 from playwright.async_api import async_playwright
 
@@ -19,7 +18,8 @@ logger = logging.getLogger(__name__)
 class AiringEpisodesScraper:
     def __init__(self):
         self.base_url = "https://animepahe.si"
-        self.cache_file = 'data.json'
+        # Changed output file to daily_update.json as per prompt requirements
+        self.output_file = 'daily_update.json'
         
     async def scrape_airing_episodes(self, pages=5):
         """Scrape currently airing episodes from multiple pages"""
@@ -62,7 +62,11 @@ class AiringEpisodesScraper:
                     await page.wait_for_timeout(5000)
                 
                 # Wait for content to load
-                await page.wait_for_selector('a[href*="/play/"]', timeout=15000)
+                try:
+                    await page.wait_for_selector('a[href*="/play/"]', timeout=15000)
+                except Exception:
+                    logger.warning(f"⚠️ No episode links found on page {page_num}")
+                    continue
                 
                 # More specific selectors to avoid duplicates
                 episode_selectors = [
@@ -177,7 +181,7 @@ class AiringEpisodesScraper:
     def parse_episode_text(self, text):
         """Parse anime name and episode number from text with improved logic"""
         if not text:
-            return "Unknown Anime", 1
+            return "Unknown Anime", "1"
         
         # Clean the text - remove extra whitespace and common prefixes
         clean_text = re.sub(r'\s+', ' ', text).strip()
@@ -186,7 +190,6 @@ class AiringEpisodesScraper:
         clean_text = re.sub(r'\bBD\b', '', clean_text)  # Remove BD text
         
         # Extract the main anime name and episode number
-        # Look for patterns like "Anime Name - Episode 123" or "Anime Name 123"
         patterns = [
             r'^(.+?)\s*-\s*[Ee]pisode\s*(\d+).*$',
             r'^(.+?)\s*-\s*[Ee][Pp]\s*(\d+).*$',
@@ -196,7 +199,7 @@ class AiringEpisodesScraper:
         ]
         
         anime_name = "Unknown Anime"
-        episode_number = 1
+        episode_number = "1"
         
         for pattern in patterns:
             match = re.search(pattern, clean_text)
@@ -205,7 +208,7 @@ class AiringEpisodesScraper:
                 potential_number = match.group(2).strip()
                 
                 if potential_number.isdigit():
-                    episode_number = int(potential_number)
+                    episode_number = str(int(potential_number)) # Keep as string for consistency with app models if needed, but JSON usually int is fine. App expects String in Model.
                     anime_name = potential_name
                     
                     # Clean up the anime name
@@ -219,7 +222,8 @@ class AiringEpisodesScraper:
         if anime_name == "Unknown Anime":
             numbers = re.findall(r'\b(\d+)\b', clean_text)
             if numbers:
-                episode_number = max(map(int, numbers))
+                # Assuming the last number is likely the episode number if name failed
+                episode_number = str(max(map(int, numbers)))
                 # Try to extract anime name by removing the number and common suffixes
                 anime_name = re.sub(r'\s*\b\d+\b.*$', '', clean_text).strip()
                 anime_name = re.sub(r'\s*-\s*$', '', anime_name)
@@ -232,54 +236,30 @@ class AiringEpisodesScraper:
         if not anime_name or anime_name.isdigit() or len(anime_name) < 2:
             anime_name = "Unknown Anime"
         
-        return anime_name, episode_number
+        return anime_name, str(episode_number)
     
-    def save_to_cache(self, episodes):
-        """Save episodes to cache file"""
+    def save_to_file(self, episodes):
+        """Save episodes to daily_update.json"""
         try:
-            # Load existing cache
-            try:
-                with open(self.cache_file, 'r', encoding='utf-8') as f:
-                    cache = json.load(f)
-            except FileNotFoundError:
-                cache = {
-                    'anime_episodes': {},
-                    'episode_iframes': {},
-                    'currently_airing_episodes': {
-                        'episodes': [],
-                        'timestamp': datetime.now().isoformat(),
-                        'count': 0
-                    },
-                    'popular_anime': {
-                        'anime': [],
-                        'timestamp': datetime.now().isoformat(),
-                        'count': 0
-                    },
-                    'metadata': {
-                        'created_at': datetime.now().isoformat(),
-                        'last_updated': datetime.now().isoformat()
-                    }
-                }
-            
-            # Update currently airing episodes
-            cache['currently_airing_episodes'] = {
-                'episodes': episodes,
+            data = {
                 'timestamp': datetime.now().isoformat(),
-                'count': len(episodes)
+                'count': len(episodes),
+                'episodes': episodes
             }
             
-            # Update metadata
-            cache['metadata']['last_updated'] = datetime.now().isoformat()
+            # Save to daily_update.json in the root directory (parent of scripts/)
+            # The script is in scripts/ so we go up one level
+            root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            output_path = os.path.join(root_dir, self.output_file)
             
-            # Save back to file
-            with open(self.cache_file, 'w', encoding='utf-8') as f:
-                json.dump(cache, f, indent=2, ensure_ascii=False)
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
             
-            logger.info(f"💾 Saved {len(episodes)} episodes to cache file: {self.cache_file}")
+            logger.info(f"💾 Saved {len(episodes)} episodes to: {output_path}")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Error saving to cache: {e}")
+            logger.error(f"❌ Error saving to file: {e}")
             return False
 
 async def main():
@@ -292,18 +272,13 @@ async def main():
         # Scrape episodes from 5 pages
         episodes = await scraper.scrape_airing_episodes(pages=5)
         
-        # Save to cache
-        success = scraper.save_to_cache(episodes)
+        # Save to file
+        success = scraper.save_to_file(episodes)
         
         if success:
-            logger.info(f"✅ Successfully updated cache with {len(episodes)} episodes from 5 pages")
-            print(f"\n📺 Updated {len(episodes)} currently airing episodes:")
-            for i, episode in enumerate(episodes[:25], 1):  # Show first 25
-                print(f"   {i:2d}. {episode['anime_name']} - Episode {episode['episode_number']}")
-            if len(episodes) > 25:
-                print(f"   ... and {len(episodes) - 25} more episodes")
+            logger.info(f"✅ Successfully updated daily_update.json with {len(episodes)} episodes")
         else:
-            logger.error("❌ Failed to save episodes to cache")
+            logger.error("❌ Failed to save episodes")
             
     except Exception as e:
         logger.error(f"❌ Scraping failed: {e}")
