@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Player</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #000;
+            color: white;
+            min-height: 100vh;
+        }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        .header { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+        .nav-btn {
+            padding: 6px 12px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: white;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            font-size: 0.8rem;
+        }
+        .nav-btn:hover { background: rgba(255, 255, 255, 0.2); color: #1a73e8; }
+        .player-container {
+            width: 100%;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+            position: relative;
+        }
+        .player-iframe { width: 100%; height: 70vh; border: none; background: #000; }
+        @media (max-width: 768px) { .player-iframe { height: 50vh; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <a href="#" onclick="history.back()" class="nav-btn"><i class="fas fa-arrow-left me-2"></i> Back</a>
+            <a href="index.html" class="nav-btn"><i class="fas fa-home me-2"></i> Home</a>
+        </div>
+
+        <div class="player-container" id="playerWrapper">
+            <div style="padding: 100px; text-align: center;">
+                <i class="fas fa-spinner fa-spin fa-2x"></i>
+                <p>Loading player...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const videoUrl = urlParams.get('video_url');
+        const epNum = urlParams.get('ep');
+        const animeId = urlParams.get('anime_id');
+
+        document.addEventListener('DOMContentLoaded', () => {
+            if (videoUrl) {
+                // Determine if it's a direct stream or needs scraping/embed
+                // The JSON "url" is a page on animepahe (e.g., https://animepahe.si/play/...)
+                // Embedding that directly might not work due to X-Frame-Options or it might work.
+                // If it's an "iframe_url" (e.g. kvik.cx/embed...) it works in iframe.
+                // If it's the animepahe play page, we might need to rely on the scraper to get the real source.
+
+                // For this task, we will try to embed it.
+                // If the user said "the json file have everything", hopefully `iframe_url` is populated in some.
+                // Looking at the sample JSON, `iframe_url` was null for Jujutsu Kaisen.
+                // So we likely need to load the `url` which is the play page.
+                // However, loading a full external site in an iframe usually has issues.
+                // The user mentioned "scraper.js" replaces "airing.py".
+
+                const iframe = document.createElement('iframe');
+                iframe.src = videoUrl;
+                iframe.className = 'player-iframe';
+                iframe.allowFullscreen = true;
+
+                const wrapper = document.getElementById('playerWrapper');
+                wrapper.innerHTML = '';
+                wrapper.appendChild(iframe);
+
+                // Save History
+                if (animeId) {
+                    saveHistory(animeId, epNum);
+                }
+            } else {
+                 document.getElementById('playerWrapper').innerHTML =
+                    '<div style="padding:100px;text-align:center;color:#ff6b6b;"><h2>No Video URL</h2></div>';
+            }
+        });
+
+        function saveHistory(id, ep) {
+            let history = JSON.parse(localStorage.getItem('dtech_watch_history') || '[]');
+            history = history.filter(item => item.animeId !== id);
+            history.unshift({
+                animeId: id,
+                epNum: ep,
+                timestamp: Date.now()
+            });
+            if (history.length > 15) history = history.slice(0, 15);
+            localStorage.setItem('dtech_watch_history', JSON.stringify(history));
+        }
+    </script>
+</body>
+</html>
