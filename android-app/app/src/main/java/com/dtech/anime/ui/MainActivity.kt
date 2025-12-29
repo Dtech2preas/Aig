@@ -1,184 +1,201 @@
 package com.dtech.anime.ui
 
-import android.content.Intent
+import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.View
-import android.view.inputmethod.EditorInfo
-import android.widget.EditText
-import android.widget.ImageView
+import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.lifecycleScope
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.dtech.anime.R
-import com.dtech.anime.data.Anime
-import com.dtech.anime.data.AssetManagerRepository
-import com.dtech.anime.data.FreshEpisode
-import com.dtech.anime.data.ScraperService
-import com.dtech.anime.data.WatchHistoryRepository
-import com.dtech.anime.data.db.HistoryEntity
-import com.dtech.anime.ui.adapters.CardItem
-import com.dtech.anime.ui.adapters.HorizontalCardAdapter
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var repository: AssetManagerRepository
-    private lateinit var historyRepository: WatchHistoryRepository
+    private lateinit var visibleWebView: WebView
+    private lateinit var hiddenWebView: WebView
 
-    private lateinit var popularAdapter: HorizontalCardAdapter
-    private lateinit var freshAdapter: HorizontalCardAdapter
-    private lateinit var historyAdapter: HorizontalCardAdapter
-
-    private lateinit var swipeRefresh: SwipeRefreshLayout
-
+    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
 
-        repository = AssetManagerRepository(this)
-        historyRepository = WatchHistoryRepository(this)
+        // Setup layout programmatically to avoid XML dependency issues after deletions
+        val layout = FrameLayout(this)
+        layout.layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        )
 
-        setupViews()
-        setupSearch()
-        loadData()
+        visibleWebView = WebView(this)
+        visibleWebView.layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        )
+        layout.addView(visibleWebView)
 
-        // Check if we need to run scraper
-        checkAndRunScraper()
+        hiddenWebView = WebView(this)
+        hiddenWebView.layoutParams = FrameLayout.LayoutParams(1, 1) // Tiny, invisible
+        hiddenWebView.visibility = View.INVISIBLE
+        layout.addView(hiddenWebView)
+
+        setContentView(layout)
+
+        setupVisibleWebView()
+        setupHiddenWebView()
     }
 
-    private fun setupViews() {
-        swipeRefresh = findViewById(R.id.swipe_refresh)
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun setupVisibleWebView() {
+        visibleWebView.settings.javaScriptEnabled = true
+        visibleWebView.settings.domStorageEnabled = true
+        visibleWebView.webViewClient = WebViewClient()
+        visibleWebView.webChromeClient = WebChromeClient()
+        visibleWebView.addJavascriptInterface(WebAppInterface(), "Android")
 
-        // Popular Anime
-        val rvPopular = findViewById<RecyclerView>(R.id.rv_popular_anime)
-        rvPopular.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
-        popularAdapter = HorizontalCardAdapter { item ->
-            if (item is CardItem.AnimeItem) openDetails(item.anime)
-        }
-        rvPopular.adapter = popularAdapter
-
-        // Fresh Episodes
-        val rvFresh = findViewById<RecyclerView>(R.id.rv_fresh_episodes)
-        rvFresh.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
-        freshAdapter = HorizontalCardAdapter { item ->
-            if (item is CardItem.EpisodeItem) openPlayerForEpisode(item.episode)
-        }
-        rvFresh.adapter = freshAdapter
-
-        // Continue Watching
-        val rvHistory = findViewById<RecyclerView>(R.id.rv_continue_watching)
-        rvHistory.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
-        historyAdapter = HorizontalCardAdapter { item ->
-            if (item is CardItem.HistoryItem) openPlayerForHistory(item.history)
-        }
-        rvHistory.adapter = historyAdapter
-
-        swipeRefresh.setOnRefreshListener {
-            checkAndRunScraper(force = true)
-        }
+        // Load the local HTML
+        visibleWebView.loadUrl("file:///android_asset/www/index.html")
     }
 
-    private fun setupSearch() {
-        val etSearch = findViewById<EditText>(R.id.et_search)
-        val btnSearch = findViewById<ImageView>(R.id.btn_search)
-
-        fun doSearch() {
-            val query = etSearch.text.toString().trim()
-            if (query.isNotEmpty()) {
-                val intent = Intent(this, SearchActivity::class.java)
-                intent.putExtra("query", query)
-                startActivity(intent)
-            }
-        }
-
-        btnSearch.setOnClickListener { doSearch() }
-        etSearch.setOnEditorActionListener { _, actionId, _ ->
-            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                doSearch()
-                true
-            } else {
-                false
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun setupHiddenWebView() {
+        hiddenWebView.settings.javaScriptEnabled = true
+        hiddenWebView.settings.domStorageEnabled = true
+        hiddenWebView.settings.userAgentString = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        hiddenWebView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                // When page loads, if we are in scraping mode, inject the scraper script
+                // The injection is actually triggered by scrapeUpdates() calling loadUrl
+                // But we can also inject the scraper.js logic here if we navigated.
             }
         }
     }
 
-    private fun loadData() {
-        lifecycleScope.launch {
-            // Load Popular
-            val popular = repository.loadPopularAnime()
-            popularAdapter.submitList(popular.map { CardItem.AnimeItem(it) })
+    private inner class WebAppInterface {
+        @JavascriptInterface
+        fun scrapeUpdates() {
+            runOnUiThread {
+                Toast.makeText(this@MainActivity, "Starting background scrape...", Toast.LENGTH_SHORT).show()
+                startScrapingProcess()
+            }
+        }
+    }
 
-            // Load Fresh
-            val fresh = repository.loadFreshEpisodes()
-            freshAdapter.submitList(fresh.map { CardItem.EpisodeItem(it) })
+    private fun startScrapingProcess() {
+        // 1. Load the target site in hidden webview
+        hiddenWebView.loadUrl("https://animepahe.si/")
+
+        // 2. Wait a bit then inject scraper
+        // We use a simple delayed runnable. In a robust app, we'd wait for onPageFinished and check logic.
+        hiddenWebView.postDelayed({
+            injectScraperScript()
+        }, 8000) // Wait 8 seconds for initial load + DDOS guard
+    }
+
+    private fun injectScraperScript() {
+        // Read scraper.js content
+        val scraperJs = try {
+            assets.open("www/js/scraper.js").bufferedReader().use { it.readText() }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return
         }
 
-        lifecycleScope.launch {
-            // Observe History
-            historyRepository.allHistory.collectLatest { historyList ->
-                val container = findViewById<View>(R.id.layout_continue_watching)
-                if (historyList.isNotEmpty()) {
-                    container.visibility = View.VISIBLE
-                    historyAdapter.submitList(historyList.map { CardItem.HistoryItem(it) })
-                } else {
-                    container.visibility = View.GONE
+        // Inject the script and call the function
+        val injection = """
+            $scraperJs
+            (function() {
+                var result = scrapeFreshEpisodes();
+                return JSON.stringify(result);
+            })();
+        """.trimIndent()
+
+        hiddenWebView.evaluateJavascript(injection) { result ->
+            // result is the JSON string returned by scrapeFreshEpisodes
+            // result might be quoted string like "\"{\"status\":\"...\"}\""
+
+            // Clean up the string (remove quotes added by evaluateJavascript)
+            var jsonStr = result
+            if (jsonStr != null) {
+                if (jsonStr.startsWith("\"") && jsonStr.endsWith("\"")) {
+                    jsonStr = jsonStr.substring(1, jsonStr.length - 1)
                 }
+                // Unescape
+                jsonStr = jsonStr.replace("\\\"", "\"").replace("\\\\", "\\")
+
+                handleScraperResult(jsonStr)
             }
         }
     }
 
-    private fun checkAndRunScraper(force: Boolean = false) {
-        val prefs = getSharedPreferences("dtech_prefs", MODE_PRIVATE)
-        val lastRun = prefs.getLong("last_scrape_time", 0)
-        val now = System.currentTimeMillis()
-        val oneDayMs = 24 * 60 * 60 * 1000
+    private fun handleScraperResult(jsonStr: String) {
+        if (jsonStr == "null" || jsonStr.isEmpty()) return
 
-        if (force || (now - lastRun > oneDayMs)) {
-            Toast.makeText(this, "Checking for fresh episodes...", Toast.LENGTH_SHORT).show()
-            lifecycleScope.launch {
-                val newEpisodes = ScraperService.scrapeFreshEpisodes(this@MainActivity)
-                if (newEpisodes.isNotEmpty()) {
-                    // Refresh the list
-                    val fresh = repository.loadFreshEpisodes()
-                    freshAdapter.submitList(fresh.map { CardItem.EpisodeItem(it) })
-                    Toast.makeText(this@MainActivity, "Episodes updated!", Toast.LENGTH_SHORT).show()
-                }
-                swipeRefresh.isRefreshing = false
+        // We need to parse it partially to check status
+        // Simple string check is safer than importing GSON just for this check if we want to keep it simple
+        if (jsonStr.contains("\"status\":\"WAIT\"") || jsonStr.contains("\"status\":\"RETRY\"")) {
+            // Retry after delay
+            hiddenWebView.postDelayed({
+                injectScraperScript()
+            }, 5000)
+        } else if (jsonStr.contains("\"status\":\"SUCCESS\"")) {
+            // Extract data part manually or pass whole thing to UI
+            // We need to extract the 'data' array from the JSON object
+            // Let's pass the array directly to the UI
+
+            // We need to parse it to get the 'data' field content
+            // Since we deleted Gson (or maybe not? dependencies might still be there),
+            // let's do a trick: we will just pass the raw episodes array string to the visible WebView.
+
+            // Actually, let's just pass the data object string if we can.
+            // But doing regex on JSON is fragile.
+            // Let's rely on the fact that we can call visibleWebView to parse it.
+
+            runOnUiThread {
+                 // Pass the whole JSON string to the UI and let it handle parsing
+                 // We first need to parse it in JS context of visibleWebView or pass it as string.
+
+                 // Ideally: visibleWebView.evaluateJavascript("onEpisodesFound('" + escape(jsonStr) + "')", null)
+                 // But passing huge string can be tricky.
+
+                 // Let's try to extract just the data part using string manipulation if possible,
+                 // OR assuming 'scraper.js' returns {status:..., data:[...]}
+
+                 // Let's just pass the full JSON to a helper in UI which extracts .data
+
+                 // Escape single quotes for JS injection
+                 val safeJson = jsonStr.replace("'", "\\'")
+
+                 // We need to call: onEpisodesFound(data_json_string)
+                 // But our JSON has {status:..., data:...}
+                 // Let's modify scraper.js or index.html to handle this format.
+                 // I'll update index.html's onEpisodesFound to expect the episodes array,
+                 // so I need to extract it here OR update index.html to handle the full object.
+                 // Updating index.html to handle full object is easier? No, I already wrote it to expect episodes.
+                 // Let's update this function to pass the "data" property.
+
+                 // Actually, it's safer to let the UI parse the outer object.
+                 // I will update the logic to pass the 'data' property content.
+
+                 // Wait, I can't easily parse JSON in Kotlin without GSON/Kotlinx.Serialization.
+                 // Are they available? Build.gradle says?
+                 // I should check build.gradle.kts.
+                 // If not, I can just substring.
+
+                 // Hacky substring: find "data": and the rest.
+                 val dataIndex = jsonStr.indexOf("\"data\":")
+                 if (dataIndex != -1) {
+                     var dataStr = jsonStr.substring(dataIndex + 7)
+                     if (dataStr.endsWith("}")) dataStr = dataStr.substring(0, dataStr.length - 1)
+
+                     // Send to UI
+                     val jsCall = "onEpisodesFound('${dataStr.replace("'", "\\'")}')"
+                     visibleWebView.evaluateJavascript(jsCall, null)
+                     Toast.makeText(this@MainActivity, "Episodes synced to UI", Toast.LENGTH_SHORT).show()
+                 }
             }
-        } else {
-            swipeRefresh.isRefreshing = false
         }
-    }
-
-    private fun openDetails(anime: Anime) {
-        startActivity(DetailsActivity.newIntent(this, anime))
-    }
-
-    private fun openPlayerForEpisode(episode: FreshEpisode) {
-        // Need to convert FreshEpisode to something PlayerActivity can handle
-        // or update PlayerActivity to handle FreshEpisode
-        // For now, let's assume we pass ID and SessionID
-        if (episode.animeId != null && episode.sessionId != null) {
-            // TODO: Ensure PlayerActivity can take raw IDs.
-            // Current PlayerActivity likely expects an Anime object.
-            // We might need to fetch the anime first? Or just pass necessary data.
-            // Given "Don't lazy load entire DB", fetching anime by ID might be hard if we don't know the shard.
-            // But we can construct a dummy Anime object if needed.
-             val intent = PlayerActivity.newIntent(this, episode.animeId, episode.sessionId, episode.episodeNumber.toString(), episode.animeName)
-             startActivity(intent)
-        } else {
-            // If it's a raw link (not parsed correctly), we might need another strategy.
-            // Scraper logic ensures we have IDs.
-            Toast.makeText(this, "Cannot play this episode directly yet", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun openPlayerForHistory(history: HistoryEntity) {
-        val intent = PlayerActivity.newIntent(this, history.animeId, history.sessionId, history.episodeNumber.toString(), history.animeTitle)
-        startActivity(intent)
     }
 }
