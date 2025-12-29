@@ -12,6 +12,7 @@
         android:roundIcon="@drawable/ic_launcher"
         android:supportsRtl="true"
         android:theme="@style/Theme.DTECHAnime"
+        android:usesCleartextTraffic="true"
         tools:targetApi="31">
 
         <activity
@@ -22,14 +23,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <activity android:name=".ui.DetailsActivity" />
-        <activity android:name=".ui.SearchActivity" />
-        <activity
-            android:name=".ui.PlayerActivity"
-            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
-            android:launchMode="singleTop"
-            android:theme="@style/Theme.DTECHAnime.Fullscreen" />
 
     </application>
 
