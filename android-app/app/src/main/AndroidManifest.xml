@@ -24,6 +24,7 @@
         </activity>
 
         <activity android:name=".ui.DetailsActivity" />
+        <activity android:name=".ui.SearchActivity" />
         <activity
             android:name=".ui.PlayerActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
