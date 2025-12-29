@@ -49,8 +49,7 @@ class DetailsActivity : AppCompatActivity() {
         rvEpisodes.adapter = EpisodeAdapter(anime.episodes) { episode ->
             // Use dummy video URL if scrape failed/null, or prompt user
             // Ideally we scrape the specific episode page here if iframe_url is null
-            val urlToPlay = episode.iframeUrl ?: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-            startActivity(PlayerActivity.newIntent(this, urlToPlay))
+            startActivity(PlayerActivity.newIntent(this, anime.id, episode.episodeId, episode.number, anime.title))
         }
     }
 
