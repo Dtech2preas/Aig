@@ -210,39 +210,63 @@
         const coverCache = new Map();
 
         async function getAnimeCover(animeName) {
+            if (!animeName) return null;
+
             if (coverCache.has(animeName)) return coverCache.get(animeName);
             const cached = localStorage.getItem(`cover_${animeName}`);
             if (cached) { coverCache.set(animeName, cached); return cached; }
 
             try {
+                // Rate limit protection - wait random time
+                await new Promise(r => setTimeout(r, Math.random() * 500));
+
                 const cleanName = animeName.replace(/[^\w\s]/gi, '').trim();
                 const res = await fetch(`https://kitsu.io/api/edge/anime?filter[text]=${encodeURIComponent(cleanName)}&page[limit]=1`);
+
+                if (!res.ok) throw new Error('Kitsu API Error');
+
                 const data = await res.json();
-                const url = data.data?.[0]?.attributes?.posterImage?.medium;
+                const attrs = data.data?.[0]?.attributes;
+                const url = attrs?.posterImage?.medium || attrs?.posterImage?.original;
+
                 if (url) {
                     coverCache.set(animeName, url);
                     localStorage.setItem(`cover_${animeName}`, url);
                     return url;
                 }
-            } catch (e) { console.error(e); }
+            } catch (e) {
+                console.warn(`Failed to fetch cover for ${animeName}`, e);
+            }
             return null;
         }
 
         async function loadAllCoverImages() {
             const els = document.querySelectorAll('.loading-cover');
-            for (let i=0; i<els.length; i+=3) {
-                const batch = Array.from(els).slice(i, i+3);
+            // Process in smaller batches
+            for (let i=0; i<els.length; i+=5) {
+                const batch = Array.from(els).slice(i, i+5);
                 await Promise.all(batch.map(async (el) => {
-                    if (el.tagName === 'IMG') return;
+                    // Check if already replaced
+                    if (el.tagName === 'IMG' || !el.parentNode) return;
+
                     const name = el.getAttribute('data-anime-name');
                     const url = await getAnimeCover(name);
+
                     if (url) {
                         const img = document.createElement('img');
-                        img.src = url; img.className = 'anime-cover';
-                        el.parentNode.replaceChild(img, el);
+                        img.src = url;
+                        img.className = 'anime-cover';
+                        img.alt = name;
+                        // Replace the loading div with the image
+                        if (el.parentNode) {
+                            el.parentNode.replaceChild(img, el);
+                        }
+                    } else {
+                        // Keep loading state but maybe change style to indicate no image?
+                        // For now we keep the placeholder icon
+                        el.style.backgroundColor = '#333';
                     }
                 }));
-                await new Promise(r => setTimeout(r, 200));
             }
         }
 
@@ -251,12 +275,14 @@
         async function loadPopularAnime() {
             try {
                 const response = await fetch('data/popular.json');
+                if (!response.ok) throw new Error('Popular JSON not found');
+
                 const popularAnime = await response.json();
 
                 const container = document.getElementById('popularAnimeContainer');
                 if (popularAnime && popularAnime.length > 0) {
                     container.innerHTML = popularAnime.map(anime => `
-                        <div class="anime-card-compact" onclick="alert('Not implemented in this shell')">
+                        <div class="anime-card-compact" onclick="window.location.href='episodes.html?id=${anime.id}&title=${encodeURIComponent(anime.title)}'">
                             <div class="cover-wrapper">
                                 <div class="loading-cover" data-anime-name="${anime.title}">
                                     <i class="fas fa-film"></i>
@@ -268,9 +294,12 @@
                         </div>
                     `).join('');
                     loadAllCoverImages();
+                } else {
+                    container.innerHTML = '<div class="alert alert-warning">No popular anime found.</div>';
                 }
             } catch (e) {
                 console.error("Failed to load popular anime", e);
+                document.getElementById('popularAnimeContainer').innerHTML = '<div class="text-muted">Could not load popular anime.</div>';
             }
         }
 
@@ -279,81 +308,127 @@
             const container = document.getElementById('freshEpisodesContainer');
 
             if (cached) {
-                const data = JSON.parse(cached);
-                // Check if data is stale (24h)
-                const now = new Date().getTime();
-                const diff = now - (data.timestamp || 0);
-                if (diff > 24 * 60 * 60 * 1000) {
-                     // Auto refresh if stale
-                     forceRefresh();
-                }
+                try {
+                    const data = JSON.parse(cached);
+                    // Check if data is stale (24h)
+                    const now = new Date().getTime();
+                    const diff = now - (data.timestamp || 0);
 
-                if (data.episodes && data.episodes.length > 0) {
-                    document.getElementById('lastUpdated').innerText = new Date(data.timestamp).toLocaleString();
-
-                    container.innerHTML = data.episodes.map(episode => `
-                        <div class="anime-card-compact"
-                             onclick="startWatch('${episode.anime_id}', '${episode.session_id}')">
-                            <div class="cover-wrapper">
-                                <div class="loading-cover" data-anime-name="${episode.anime_name}">
-                                    <i class="fas fa-play"></i>
-                                </div>
-                                <div class="play-overlay"><i class="fas fa-play-circle fa-2x text-white"></i></div>
-                                <div class="overlay-ep"><span class="ep-badge">Ep ${episode.episode_number}</span></div>
-                            </div>
-                            <div class="compact-title">${episode.anime_name}</div>
-                            <div class="compact-subtitle">${episode.episode_title}</div>
-                        </div>
-                    `).join('');
-                    loadAllCoverImages();
-                    return;
+                    if (diff > 24 * 60 * 60 * 1000) {
+                         console.log("Fresh episodes cache expired, refreshing...");
+                         forceRefresh();
+                    } else {
+                        if (data.episodes && data.episodes.length > 0) {
+                            document.getElementById('lastUpdated').innerText = new Date(data.timestamp).toLocaleString();
+                            renderFreshEpisodes(data.episodes);
+                            return;
+                        }
+                    }
+                } catch (e) {
+                    console.error("Cache corrupted", e);
+                    localStorage.removeItem(CACHE_KEY_FRESH);
                 }
             }
 
             // If no cache or empty
             container.innerHTML = '<div class="alert alert-info">Fetching updates...</div>';
+            // Trigger refresh if we didn't just find valid cache
             forceRefresh();
+        }
+
+        function renderFreshEpisodes(episodes) {
+            const container = document.getElementById('freshEpisodesContainer');
+            if (!episodes || episodes.length === 0) {
+                container.innerHTML = '<div class="alert alert-warning">No updates found.</div>';
+                return;
+            }
+
+            container.innerHTML = episodes.map(episode => `
+                <div class="anime-card-compact"
+                     onclick="startWatch('${episode.anime_id}', '${episode.session_id}')">
+                    <div class="cover-wrapper">
+                        <div class="loading-cover" data-anime-name="${episode.anime_name}">
+                            <i class="fas fa-play"></i>
+                        </div>
+                        <div class="play-overlay"><i class="fas fa-play-circle fa-2x text-white"></i></div>
+                        <div class="overlay-ep"><span class="ep-badge">Ep ${episode.episode_number}</span></div>
+                    </div>
+                    <div class="compact-title">${episode.anime_name}</div>
+                    <div class="compact-subtitle">${episode.episode_title}</div>
+                </div>
+            `).join('');
+            loadAllCoverImages();
         }
 
         // --- 4. INTERACTION & BRIDGE ---
 
         function forceRefresh() {
-            document.getElementById('statusAlert').classList.remove('d-none');
-            document.getElementById('statusAlert').innerText = "Scraping fresh episodes...";
-            if (window.Android) {
-                window.Android.scrapeUpdates();
+            const alertBox = document.getElementById('statusAlert');
+            alertBox.classList.remove('d-none');
+            alertBox.innerText = "Scraping fresh episodes...";
+
+            if (window.Android && window.Android.scrapeUpdates) {
+                try {
+                    window.Android.scrapeUpdates();
+                } catch(e) {
+                     console.error("Bridge call failed", e);
+                     alertBox.innerText = "Error contacting app.";
+                }
             } else {
                 console.warn("Android interface not found");
+                // For browser testing, maybe mock it or hide alert after timeout
+                setTimeout(() => {
+                    alertBox.classList.add('d-none');
+                }, 2000);
             }
         }
 
         // Called by Android when scraping is done
+        function onScrapeResult(type, jsonString) {
+             console.log("Received scrape result: " + type);
+             if (type === 'fresh_episodes') {
+                 onEpisodesFound(jsonString);
+             }
+        }
+
         function onEpisodesFound(jsonString) {
             console.log("Episodes found!");
             document.getElementById('statusAlert').classList.add('d-none');
             try {
-                const episodes = JSON.parse(jsonString);
-                const data = {
-                    timestamp: new Date().getTime(),
-                    episodes: episodes
-                };
-                localStorage.setItem(CACHE_KEY_FRESH, JSON.stringify(data));
-                loadFreshEpisodes(); // Reload UI
+                const result = JSON.parse(jsonString);
+                // Handle different potential structures
+                // scraper.js returns { status: "SUCCESS", data: [...] }
+                let episodes = [];
+
+                if (Array.isArray(result)) {
+                    episodes = result;
+                } else if (result.data && Array.isArray(result.data)) {
+                    episodes = result.data;
+                } else if (result.episodes && Array.isArray(result.episodes)) {
+                    episodes = result.episodes;
+                }
+
+                if (episodes.length > 0) {
+                    const data = {
+                        timestamp: new Date().getTime(),
+                        episodes: episodes
+                    };
+                    localStorage.setItem(CACHE_KEY_FRESH, JSON.stringify(data));
+                    renderFreshEpisodes(episodes);
+                } else {
+                    console.warn("No episodes in payload", result);
+                }
             } catch (e) {
                 console.error("Error parsing episodes", e);
             }
         }
 
+        // Expose globally
+        window.onScrapeResult = onScrapeResult;
+        window.onEpisodesFound = onEpisodesFound;
+
         function startWatch(animeId, sessionId) {
-            // Logic to play video
-            // In a real app, this might navigate to a player page
-            // For now, we'll just log it or alert
-            console.log(`Watching ${animeId} session ${sessionId}`);
-            // Note: In the prompt, the user mentioned MainActivity launching a Hidden WebView.
-            // But for watching, we probably need another WebView or Player.
-            // Since we deleted PlayerActivity, we might need to handle it here or in MainActivity.
-            // For this task, "Bridge: Create a JavascriptInterface... scrapeUpdates" is the priority.
-            alert("Watch clicked: " + sessionId);
+             window.location.href = `player.html?anime_id=${animeId}&video_url=${encodeURIComponent('https://animepahe.si/play/'+animeId+'/'+sessionId)}`;
         }
 
         // --- 5. INITIALIZATION ---
@@ -362,11 +437,16 @@
             loadFreshEpisodes();
 
             // Search Form
-            document.getElementById('searchForm').addEventListener('submit', (e) => {
-                e.preventDefault();
-                const query = document.getElementById('searchInput').value;
-                alert('Search for: ' + query);
-            });
+            const searchForm = document.getElementById('searchForm');
+            if (searchForm) {
+                searchForm.addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    const query = document.getElementById('searchInput').value;
+                    if (query.trim()) {
+                        window.location.href = `search.html?q=${encodeURIComponent(query)}`;
+                    }
+                });
+            }
         });
     </script>
 </body>

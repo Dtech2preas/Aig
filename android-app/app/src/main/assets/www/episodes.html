@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Episodes</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+            color: #f5f5f5;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container { max-width: 1200px; margin: 0 auto; }
+
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            background: rgba(30, 30, 30, 0.5);
+            padding: 20px;
+            border-radius: 15px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .back-btn, .live-btn {
+            padding: 10px 20px;
+            background: rgba(26, 115, 232, 0.1);
+            border: 1px solid rgba(26, 115, 232, 0.3);
+            border-radius: 8px;
+            color: white;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
+
+        .back-btn:hover, .live-btn:hover { background: #1a73e8; }
+        .live-btn { color: #feca57; border-color: #feca57; }
+        .live-btn:hover { background: #feca57; color: #000; }
+
+        .anime-info { flex: 1; }
+
+        .title-row {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .anime-info h1 {
+            font-size: 2rem;
+            margin: 0;
+            background: linear-gradient(45deg, #1a73e8, #64b5f6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .fav-btn {
+            background: transparent;
+            border: 2px solid rgba(255,255,255,0.2);
+            color: rgba(255,255,255,0.5);
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .fav-btn:hover { border-color: #ff4757; color: #ff4757; }
+        .fav-btn.active { background: #ff4757; border-color: #ff4757; color: white; }
+
+        .episodes-count { margin-top: 10px; opacity: 0.7; font-size: 0.9rem; }
+
+        .episodes-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 15px;
+        }
+
+        .episode-card {
+            background: #1e1e1e;
+            border-radius: 10px;
+            padding: 15px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: all 0.3s ease;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            height: 100%;
+        }
+
+        .episode-card:hover {
+            transform: translateY(-5px);
+            background: #252525;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+
+        .episode-number { font-size: 1.4rem; font-weight: bold; margin-bottom: 5px; color: #1a73e8; }
+        .episode-title { font-size: 0.85rem; opacity: 0.8; margin-bottom: 15px; line-height: 1.3; }
+
+        .watch-btn {
+            display: block;
+            padding: 8px 0;
+            background: #1a73e8;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: background 0.2s;
+        }
+
+        .watch-btn:hover { background: #1557b0; }
+
+        /* Pagination if needed (handled via rendering limit or full list) */
+        .loading-state { text-align: center; padding: 50px; }
+
+        @media (max-width: 768px) {
+            .episodes-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+            .header { text-align: center; justify-content: center; }
+            .title-row { justify-content: center; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> Home</a>
+
+            <div class="anime-info">
+                <div class="title-row">
+                    <h1 id="animeTitle">Loading...</h1>
+                    <button id="favBtn" class="fav-btn" onclick="toggleFavorite()">
+                        <i class="fas fa-heart"></i>
+                    </button>
+                </div>
+                <p class="episodes-count" id="episodesCount">...</p>
+            </div>
+
+            <!-- Live Check Button -->
+            <button onclick="performLiveCheck()" class="live-btn">
+                <i class="fas fa-sync-alt me-2"></i> Live Check
+            </button>
+        </div>
+
+        <div id="episodesContainer" class="episodes-grid">
+            <div class="loading-state">
+                <i class="fas fa-circle-notch fa-spin fa-3x"></i>
+                <p>Loading episodes...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. CONFIG ---
+        const urlParams = new URLSearchParams(window.location.search);
+        const animeId = urlParams.get('id');
+        let animeTitle = urlParams.get('title');
+
+        // --- 2. LOGIC ---
+
+        async function loadEpisodes() {
+            if (!animeId) {
+                document.getElementById('episodesContainer').innerHTML =
+                        '<div class="loading-state">No Anime ID provided. <a href="index.html">Go Home</a></div>';
+                return;
+            }
+
+            try {
+                // If we don't have a title, fetch it from search index first
+                if (!animeTitle) {
+                    const idxRes = await fetch('data/search_index.json');
+                    if (idxRes.ok) {
+                        const index = await idxRes.json();
+                        const found = index.find(a => a.id === animeId);
+                        if (found) {
+                            animeTitle = found.title;
+                        }
+                    }
+                }
+
+                if (!animeTitle) {
+                    throw new Error("Could not identify anime title to locate data.");
+                }
+
+                // Determine filename based on title
+                const firstChar = animeTitle.trim().charAt(0).toUpperCase();
+
+                // Default to encoded # for number/symbol files
+                let fileName = `anime_%23.json`;
+
+                if (/[A-Z]/.test(firstChar)) fileName = `anime_${firstChar}.json`;
+                else if (firstChar === 'Ü') fileName = 'anime_Ü.json';
+                else if (firstChar === 'Ō') fileName = 'anime_Ō.json';
+
+                console.log(`Loading data from ${fileName} for ${animeTitle}`);
+
+                // Fetch the index file
+                const response = await fetch(`data/index/${fileName}`);
+                if (!response.ok) throw new Error('Index file not found');
+                const listData = await response.json();
+
+                // Handle dict vs list structure (based on what we saw in anime_A.json)
+                const list = Array.isArray(listData) ? listData : (listData.anime || []);
+
+                // Find anime by ID
+                const anime = list.find(a => a.id === animeId);
+
+                if (anime) {
+                    renderEpisodes(anime);
+                } else {
+                    document.getElementById('episodesContainer').innerHTML =
+                        '<div class="loading-state">Anime not found in local index. <br> <button class="live-btn mt-3" onclick="performLiveCheck()">Try Live Check</button></div>';
+                    document.getElementById('animeTitle').innerText = animeTitle;
+                }
+
+            } catch (e) {
+                console.error(e);
+                document.getElementById('episodesContainer').innerHTML =
+                    `<div class="loading-state">Error loading episodes: ${e.message}</div>`;
+                if(animeTitle) document.getElementById('animeTitle').innerText = animeTitle;
+            }
+        }
+
+        function renderEpisodes(anime) {
+            document.title = `${anime.title} - Episodes`;
+            document.getElementById('animeTitle').innerText = anime.title;
+            document.getElementById('episodesCount').innerText = `${anime.episodes ? anime.episodes.length : 0} episodes`;
+
+            // Update favorites state
+            checkFavorite(anime.id, anime.title);
+
+            const container = document.getElementById('episodesContainer');
+
+            if (!anime.episodes || anime.episodes.length === 0) {
+                container.innerHTML = '<div class="loading-state">No episodes available. Try Live Check.</div>';
+                return;
+            }
+
+            container.innerHTML = anime.episodes.map(ep => {
+                const targetUrl = ep.iframe_url || ep.url;
+                return `
+                <div class="episode-card" onclick="goToPlayer('${ep.number}', '${encodeURIComponent(targetUrl)}')">
+                    <div>
+                        <div class="episode-number">EP ${ep.number}</div>
+                        <div class="episode-title">
+                            ${ep.title || 'Episode ' + ep.number}
+                        </div>
+                    </div>
+                    <button class="watch-btn">
+                       <i class="fas fa-play me-1"></i> Play
+                    </button>
+                </div>
+                `;
+            }).join('');
+        }
+
+        function goToPlayer(epNum, encodedUrl) {
+            window.location.href = `player.html?video_url=${encodedUrl}&ep=${epNum}&anime_id=${animeId}`;
+        }
+
+        // --- 3. FAVORITES ---
+        function checkFavorite(id, title) {
+            const favs = JSON.parse(localStorage.getItem('dtech_favorites') || '[]');
+            const isFav = favs.some(f => f.id === id);
+            const btn = document.getElementById('favBtn');
+            if(isFav && btn) btn.classList.add('active');
+        }
+
+        function toggleFavorite() {
+            let favs = JSON.parse(localStorage.getItem('dtech_favorites') || '[]');
+            const title = document.getElementById('animeTitle').innerText;
+            const index = favs.findIndex(f => f.id === animeId);
+            const btn = document.getElementById('favBtn');
+
+            if (index === -1) {
+                favs.push({ id: animeId, title: title });
+                btn.classList.add('active');
+            } else {
+                favs.splice(index, 1);
+                btn.classList.remove('active');
+            }
+            localStorage.setItem('dtech_favorites', JSON.stringify(favs));
+        }
+
+        // --- 4. LIVE CHECK ---
+        function performLiveCheck() {
+             if (window.Android) {
+                document.getElementById('episodesContainer').innerHTML =
+                        '<div class="loading-state"><i class="fas fa-spinner fa-spin fa-2x"></i><br>Checking for fresh episodes...</div>';
+                try {
+                     // Assuming this method exists or will be implemented
+                     window.Android.performLiveCheck(animeId);
+                } catch(e) {
+                     alert("Live check failed to launch.");
+                }
+            } else {
+                alert("Live Check not available in browser mode.");
+            }
+        }
+
+        // Callback for Live Check
+        window.onScrapeResult = function(type, jsonString) {
+             if (type === 'anime_episodes') {
+                 try {
+                     const result = JSON.parse(jsonString);
+                     if (result.episodes) {
+                         const currentTitle = document.getElementById('animeTitle').innerText;
+                         const merged = {
+                             title: result.title || currentTitle,
+                             id: animeId,
+                             episodes: result.episodes
+                         };
+                         renderEpisodes(merged);
+                         alert("Live check complete! Found " + result.episodes.length + " episodes.");
+                     }
+                 } catch(e) {
+                     console.error(e);
+                     alert("Error parsing live check results.");
+                 }
+             }
+        };
+
+        // Start
+        document.addEventListener('DOMContentLoaded', loadEpisodes);
+    </script>
+</body>
+</html>
